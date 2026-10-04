@@ -20,33 +20,50 @@ COLUMNS = [
     "flagged", "status", "eval_date", "exit_price", "return_pct", "egx30_return_pct", "alpha_pct"
 ]
 
+_last_error: str | None = None
+
+
+def get_connection_error() -> str | None:
+    return _last_error
+
 
 @st.cache_resource
 def _get_client() -> gspread.client.Client | None:
+    global _last_error
     try:
         creds = secret("gcp_service_account")
         if not creds:
+            _last_error = "لم يتم العثور على قسم [gcp_service_account] في الأسرار."
             return None
         creds_dict = dict(creds)
         if "private_key" in creds_dict:
             creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-        return gspread.service_account_from_dict(creds_dict)
-    except Exception:
+        client = gspread.service_account_from_dict(creds_dict)
+        _last_error = None
+        return client
+    except Exception as e:
+        _last_error = f"خطأ في بيانات الحساب (Service Account): {type(e).__name__} - {e}"
         return None
 
 
 def get_sheet() -> gspread.worksheet.Worksheet | None:
+    global _last_error
     client = _get_client()
     sheet_id = secret("GSHEET_ID")
-    if not client or not sheet_id:
+    if not client:
+        return None
+    if not sheet_id:
+        _last_error = "لم يتم العثور على معرّف الشيت GSHEET_ID في الأسرار."
         return None
     try:
-        sh = client.open_by_key(sheet_id)
+        sh = client.open_by_key(str(sheet_id).strip())
+        _last_error = None
         try:
             return sh.worksheet("recommendations")
         except gspread.exceptions.WorksheetNotFound:
             return sh.sheet1
-    except Exception:
+    except Exception as e:
+        _last_error = f"فشل فتح ملف الشيت (تأكد من مشاركة الشيت مع إيميل الخدمة كـ Editor): {type(e).__name__} - {e}"
         return None
 
 
@@ -79,7 +96,9 @@ def append_recommendation(
     llm_data: dict,
     news_items: list[dict],
     indicators: dict,
-) -> bool:
+) -> tuple[bool, str]:
+    """Returns (success: bool, target_destination: str)"""
+    global _last_error
     ts = datetime.now(CAIRO_TZ).strftime("%Y-%m-%d %H:%M:%S")
     urls = "\n".join(it.get("url", "") for it in news_items)
     inds = json.dumps(indicators, ensure_ascii=False)
@@ -120,9 +139,9 @@ def append_recommendation(
         try:
             row_vals = [row.get(c, "") for c in COLUMNS]
             sheet.append_row(row_vals)
-            return True
+            return True, "Google Sheets"
         except Exception as e:
-            print("Google Sheets append failed, falling back to CSV:", e)
+            _last_error = f"فشل الكتابة في Google Sheets: {e}"
 
     # 2. Local CSV fallback
     try:
@@ -133,10 +152,10 @@ def append_recommendation(
         else:
             df = pd.DataFrame([row])
         df.to_csv(LOCAL_CSV_PATH, index=False, encoding="utf-8-sig")
-        return True
+        return True, "ملف CSV محلي"
     except Exception as e:
-        print("Local CSV append failed:", e)
-        return False
+        _last_error = f"فشل الحفظ المحلي: {e}"
+        return False, "فشل"
 
 
 def load_history() -> pd.DataFrame:
@@ -166,7 +185,6 @@ def load_history() -> pd.DataFrame:
 
 def save_history(df: pd.DataFrame) -> bool:
     """Save an updated DataFrame back to storage (after evaluation)."""
-    # 1. Update Google Sheets if available
     sheet = get_sheet()
     if sheet:
         try:
@@ -182,7 +200,6 @@ def save_history(df: pd.DataFrame) -> bool:
         except Exception as e:
             print("Failed to update Google Sheets:", e)
 
-    # 2. Local CSV
     try:
         df_to_save = df.copy()
         if "timestamp_cairo" in df_to_save.columns:

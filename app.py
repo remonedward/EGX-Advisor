@@ -49,7 +49,11 @@ def render_analyzer_tab():
     if storage.is_using_sheets():
         st.success("🟢 وضع التخزين: متصل بـ Google Sheets مباشرة.", icon="✅")
     else:
-        st.info("ℹ️ وضع التخزين: محلي (CSV). ستعمل كل الوظائف محلياً لحين إضافة بيانات Google Sheets.", icon="💾")
+        err = storage.get_connection_error()
+        if err:
+            st.warning(f"⚠️ وضع التخزين: محلي (CSV). تنبيه الاتصال بـ Google Sheets: {err}", icon="💾")
+        else:
+            st.info("ℹ️ وضع التخزين: محلي (CSV). ستعمل كل الوظائف محلياً لحين إضافة بيانات Google Sheets.", icon="💾")
 
     # 1. Selection
     col1, col2 = st.columns([3, 1])
@@ -104,7 +108,7 @@ def _run_pipeline(ticker: str, name_ar: str, name_en: str):
 
     # 4. Persistence
     rec_id = str(uuid.uuid4())[:8]
-    saved = storage.append_recommendation(
+    saved, destination = storage.append_recommendation(
         rec_id, ticker, name_ar, ind["last_session_date"], is_stale, price_to_use,
         rec_data, news_items, ind
     )
@@ -128,9 +132,12 @@ def _run_pipeline(ticker: str, name_ar: str, name_en: str):
     if not rec_data["_meta"]["valid_logic"]:
         st.error(f"⚠️ التوصية تحتوي على تعارض منطقي: {', '.join(rec_data['_meta']['logic_errors'])}")
     if not saved:
-        st.error("فشل حفظ التوصية في سجل التخزين.")
+        st.error(f"فشل حفظ التوصية: {storage.get_connection_error()}")
     else:
-        st.success("تم تسجيل التوصية بنجاح لمتابعة أدائها لاحقاً.")
+        if destination == "Google Sheets":
+            st.success("✅ تم تسجيل التوصية بنجاح في Google Sheets مباشرة.")
+        else:
+            st.warning(f"💾 تم حفظ التوصية محلياً (CSV) فقط، ولم يتم الحفظ في Google Sheets. السبب: {storage.get_connection_error()}")
 
     # Metrics
     c1, c2, c3, c4 = st.columns(4)
