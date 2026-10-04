@@ -1,0 +1,18 @@
+# Virtual environment
+venv/
+.venv/
+
+# Secrets — NEVER commit
+.streamlit/secrets.toml
+*.json
+*.key
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data tracking (keep ticker universe only)
+data/egx_recommendations_history.csv
+*.csv
+!data/egx_tickers.csv
