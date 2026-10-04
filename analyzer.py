@@ -156,9 +156,11 @@ def generate_recommendation(
         thinking_config=types.ThinkingConfig(thinking_level=t_val),
     )
 
-    candidate_models = [model]
-    if model != "gemini-3.5-flash":
-        candidate_models.append("gemini-3.5-flash")
+    preferred = [model, "gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
+    candidate_models = []
+    for m in preferred:
+        if m and m not in candidate_models:
+            candidate_models.append(m)
 
     last_error = None
     resp = None
@@ -173,9 +175,12 @@ def generate_recommendation(
             except Exception as e:
                 err_str = str(e)
                 last_error = e
-                # Transient 503 unavailable or 429 rate limit
-                if "503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str:
-                    time.sleep(2)
+                # Quota exceeded on free tier -> skip immediately to next model
+                if "RESOURCE_EXHAUSTED" in err_str or "Quota exceeded" in err_str or "429" in err_str:
+                    break
+                # Temporary server spike -> brief sleep and retry
+                elif "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str:
+                    time.sleep(1.5)
                     continue
                 else:
                     break
