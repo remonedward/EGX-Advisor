@@ -171,7 +171,7 @@ def _run_pipeline(ticker: str, name_ar: str, name_en: str):
     fig.add_hline(y=rec_data['target_price'], line_dash="dash", line_color="green", annotation_text="الهدف")
     fig.add_hline(y=rec_data['stop_loss'], line_dash="dash", line_color="red", annotation_text="الوقف")
     fig.update_layout(xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=10, b=10), height=400)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Expanders
     with st.expander("📰 الأخبار المعتمدة في التقييم"):
@@ -185,7 +185,7 @@ def _run_pipeline(ticker: str, name_ar: str, name_en: str):
         for n in c_notes:
             st.caption(n)
         if checks:
-            st.dataframe(checks, use_container_width=True)
+            st.dataframe(checks, width="stretch")
 
 
 def render_history_tab():
@@ -256,7 +256,7 @@ def render_history_tab():
             "status": "حالة التوصية",
             "return_pct": "العائد المحقق %"
         }),
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
 
