@@ -217,53 +217,56 @@ def render_history_tab():
 
     # Performance Stats
     total_recs = len(df)
-    evaluated = df[df["status"].isin(["ناجحة", "فاشلة", "SUCCESS", "FAILED"])]
-    success_recs = df[df["status"].isin(["ناجحة", "SUCCESS"])]
-    pending_recs = df[~df["status"].isin(["ناجحة", "فاشلة", "SUCCESS", "FAILED"])]
+    evaluated = df[df["status"].str.contains("ناجحة|فاشلة|SUCCESS|FAILED", na=False)]
+    success_recs = df[df["status"].str.contains("ناجحة|SUCCESS", na=False)]
+    pending_recs = df[~df["status"].str.contains("ناجحة|فاشلة|SUCCESS|FAILED", na=False)]
 
     win_rate = (len(success_recs) / len(evaluated) * 100) if len(evaluated) > 0 else 0.0
 
     returns = pd.to_numeric(evaluated["return_pct"], errors="coerce").dropna()
     avg_return = returns.mean() if not returns.empty else 0.0
 
-    st.markdown("### 📈 إحصائيات دقة التطبيق")
+    all_returns = pd.to_numeric(df["return_pct"], errors="coerce").dropna()
+    avg_live_return = all_returns.mean() if not all_returns.empty else 0.0
+
+    st.markdown("### 📈 إحصائيات دقة التطبيق ومتابعة السوق")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("إجمالي التوصيات", total_recs)
     m2.metric("نسبة النجاح (Win Rate)", f"{win_rate:.1f}%", f"{len(success_recs)} من {len(evaluated)} منتهية")
-    m3.metric("متوسط العائد للمنتهية", f"{avg_return:+.1f}%")
-    m4.metric("توصيات قيد المتابعة", len(pending_recs))
+    m3.metric("متوسط العائد اللحظي", f"{avg_live_return:+.2f}%", "لكافة التوصيات")
+    m4.metric("توصيات قيد المتابعة", len(pending_recs), "جارٍ متابعتها لحظياً")
 
     st.markdown("---")
 
     # Table display
     display_cols = [
         "timestamp_cairo", "ticker", "company_name_ar", "recommendation",
-        "price_at_rec", "target_price", "stop_loss", "confidence",
+        "price_at_rec", "exit_price", "target_price", "stop_loss", "confidence",
         "status", "return_pct"
     ]
     avail_cols = [c for c in display_cols if c in df.columns]
 
-    st.dataframe(
-        df[avail_cols].rename(columns={
-            "timestamp_cairo": "تاريخ التوصية",
-            "ticker": "الكود",
-            "company_name_ar": "الشركة",
-            "recommendation": "التوصية",
-            "price_at_rec": "سعر الدخول",
-            "target_price": "الهدف",
-            "stop_loss": "الوقف",
-            "confidence": "الثقة %",
-            "status": "حالة التوصية",
-            "return_pct": "العائد المحقق %"
-        }),
-        width="stretch",
-        hide_index=True
-    )
+    df_display = df[avail_cols].fillna("").astype(str).rename(columns={
+        "timestamp_cairo": "تاريخ التوصية",
+        "ticker": "الكود",
+        "company_name_ar": "الشركة",
+        "recommendation": "التوصية",
+        "price_at_rec": "سعر الدخول",
+        "exit_price": "السعر اللحظي/الحالي",
+        "target_price": "الهدف",
+        "stop_loss": "الوقف",
+        "confidence": "الثقة %",
+        "status": "حالة التوصية",
+        "return_pct": "العائد اللحظي/المحقق %"
+    })
+
+    st.dataframe(df_display, width="stretch", hide_index=True)
 
 
 def _evaluate_all_history(df: pd.DataFrame) -> int:
     count = 0
-    today_str = datetime.now(CAIRO_TZ).strftime("%Y-%m-%d")
+    today_str = datetime.now(CAIRO_TZ).strftime("%Y-%m-%d %H:%M")
+    today_date = datetime.now(CAIRO_TZ).date()
     df = df.copy().astype(object)
 
     for idx, row in df.iterrows():
@@ -284,26 +287,80 @@ def _evaluate_all_history(df: pd.DataFrame) -> int:
         except (ValueError, TypeError):
             continue
 
-        # Fetch subsequent bars
+        # 1. Fetch live snapshot from TradingView
+        tv_snap, _, _ = tradingview.fetch_snapshot(ticker)
+        curr_price = float(tv_snap["close"]) if tv_snap and tv_snap.get("close") is not None else None
+        today_high = float(tv_snap["high"]) if tv_snap and tv_snap.get("high") is not None else curr_price
+        today_low = float(tv_snap["low"]) if tv_snap and tv_snap.get("low") is not None else curr_price
+
+        # 2. Fetch history bars
         hist = market_data.fetch_history_raw(ticker, period="1y")
-        if hist.empty:
-            continue
+        if curr_price is None and not hist.empty:
+            curr_price = float(hist["Close"].iloc[-1])
+            today_high = float(hist["High"].iloc[-1])
+            today_low = float(hist["Low"].iloc[-1])
 
-        # Filter bars strictly after recommendation date
-        rec_date = pd.to_datetime(rec_time).date() if pd.notna(rec_time) else None
-        if rec_date:
-            hist_after = hist[hist.index.date > rec_date]
+        rec_dt = pd.to_datetime(rec_time) if pd.notna(rec_time) else None
+        rec_date = rec_dt.date() if rec_dt else None
+
+        status = "PENDING"
+        ret = 0.0
+
+        # Evaluate previous closed days first
+        if not hist.empty and rec_date and rec_date < today_date:
+            hist_past = hist[(hist.index.date > rec_date) & (hist.index.date < today_date)]
+            if not hist_past.empty:
+                status, ret, _ = evaluator.evaluate_recommendation(rec_type, p_entry, target, stop, hist_past)
+
+        # Evaluate today's live session
+        if status == "PENDING" and curr_price is not None:
+            eff_high = max(today_high, curr_price) if today_high is not None else curr_price
+            eff_low = min(today_low, curr_price) if today_low is not None else curr_price
+
+            if rec_type in {"شراء قوي", "شراء"}:
+                if eff_high >= target:
+                    status = "SUCCESS"
+                    ret = ((target - p_entry) / p_entry) * 100
+                elif eff_low <= stop:
+                    status = "FAILED"
+                    ret = ((stop - p_entry) / p_entry) * 100
+                else:
+                    status = "PENDING"
+                    ret = ((curr_price - p_entry) / p_entry) * 100
+
+            elif rec_type in {"بيع قوي", "بيع"}:
+                if eff_low <= target:
+                    status = "SUCCESS"
+                    ret = ((p_entry - target) / p_entry) * 100
+                elif eff_high >= stop:
+                    status = "FAILED"
+                    ret = ((p_entry - stop) / p_entry) * 100
+                else:
+                    status = "PENDING"
+                    ret = ((p_entry - curr_price) / p_entry) * 100
+
+            else:  # احتفاظ
+                if (today_high and today_high >= target) or (today_low and today_low <= stop):
+                    status = "FAILED"
+                    ret = ((curr_price - p_entry) / p_entry) * 100
+                else:
+                    status = "PENDING"
+                    ret = ((curr_price - p_entry) / p_entry) * 100
+
+        # Arabic status
+        if status == "SUCCESS":
+            ar_status = "ناجحة (حقق الهدف)"
+        elif status == "FAILED":
+            ar_status = "فاشلة (ضرب الوقف)"
         else:
-            hist_after = hist.tail(10)
-
-        status, ret, note = evaluator.evaluate_recommendation(rec_type, p_entry, target, stop, hist_after)
-
-        ar_status = "ناجحة" if status == "SUCCESS" else ("فاشلة" if status == "FAILED" else "قيد المتابعة")
+            ar_status = "قيد المتابعة"
 
         df.at[idx, "status"] = ar_status
         df.at[idx, "eval_date"] = today_str
+        if curr_price is not None:
+            df.at[idx, "exit_price"] = round(curr_price, 3)
         if ret is not None:
-            df.at[idx, "return_pct"] = round(ret, 2)
+            df.at[idx, "return_pct"] = round(float(ret), 2)
         count += 1
 
     storage.save_history(df)
