@@ -165,6 +165,7 @@ def load_history() -> pd.DataFrame:
             records = sheet.get_all_records()
             df = pd.DataFrame(records)
             if not df.empty:
+                df = df.astype(object)
                 df["timestamp_cairo"] = pd.to_datetime(df["timestamp_cairo"], errors="coerce")
                 return df.sort_values("timestamp_cairo", ascending=False).reset_index(drop=True)
         except Exception as e:
@@ -173,14 +174,16 @@ def load_history() -> pd.DataFrame:
     if LOCAL_CSV_PATH.exists() and LOCAL_CSV_PATH.stat().st_size > 0:
         try:
             df = pd.read_csv(LOCAL_CSV_PATH, encoding="utf-8-sig")
-            if not df.empty and "timestamp_cairo" in df.columns:
-                df["timestamp_cairo"] = pd.to_datetime(df["timestamp_cairo"], errors="coerce")
+            if not df.empty:
+                df = df.astype(object)
+                if "timestamp_cairo" in df.columns:
+                    df["timestamp_cairo"] = pd.to_datetime(df["timestamp_cairo"], errors="coerce")
                 return df.sort_values("timestamp_cairo", ascending=False).reset_index(drop=True)
             return df
         except Exception as e:
             print("Failed to read local CSV:", e)
 
-    return pd.DataFrame(columns=COLUMNS)
+    return pd.DataFrame(columns=COLUMNS).astype(object)
 
 
 def save_history(df: pd.DataFrame) -> bool:
@@ -189,22 +192,28 @@ def save_history(df: pd.DataFrame) -> bool:
     if sheet:
         try:
             df_export = df.copy()
+            for c in COLUMNS:
+                if c not in df_export.columns:
+                    df_export[c] = ""
             if "timestamp_cairo" in df_export.columns:
                 df_export["timestamp_cairo"] = df_export["timestamp_cairo"].astype(str)
             df_export = df_export.fillna("")
             sheet.clear()
             sheet.append_row(COLUMNS)
             if not df_export.empty:
-                sheet.append_rows(df_export[COLUMNS].values.tolist())
+                sheet.append_rows(df_export[COLUMNS].astype(str).values.tolist())
             return True
         except Exception as e:
             print("Failed to update Google Sheets:", e)
 
     try:
         df_to_save = df.copy()
+        for c in COLUMNS:
+            if c not in df_to_save.columns:
+                df_to_save[c] = ""
         if "timestamp_cairo" in df_to_save.columns:
             df_to_save["timestamp_cairo"] = df_to_save["timestamp_cairo"].astype(str)
-        df_to_save.to_csv(LOCAL_CSV_PATH, index=False, encoding="utf-8-sig")
+        df_to_save[COLUMNS].to_csv(LOCAL_CSV_PATH, index=False, encoding="utf-8-sig")
         return True
     except Exception as e:
         print("Failed to save local CSV:", e)

@@ -264,6 +264,7 @@ def render_history_tab():
 def _evaluate_all_history(df: pd.DataFrame) -> int:
     count = 0
     today_str = datetime.now(CAIRO_TZ).strftime("%Y-%m-%d")
+    df = df.copy().astype(object)
 
     for idx, row in df.iterrows():
         ticker = row.get("ticker")
