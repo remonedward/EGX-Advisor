@@ -72,7 +72,7 @@ def render_analyzer_tab():
     if storage.check_duplicate_today(ticker):
         st.warning(f"تم تحليل {ticker} بالفعل اليوم. هل ترغب في إعادة التحليل؟")
 
-    if st.button("بدء التحليل", type="primary", use_container_width=True):
+    if st.button("بدء التحليل", type="primary", width="stretch"):
         with st.spinner("جارٍ جمع البيانات الفنية والأخبار وتحليل النموذج..."):
             _run_pipeline(ticker, name_ar, name_en)
 
@@ -213,7 +213,7 @@ def render_history_tab():
             data=csv_data,
             file_name="egx_recommendations_history.csv",
             mime="text/csv",
-            use_container_width=True
+            width="stretch"
         )
 
     # Performance Stats
@@ -263,12 +263,35 @@ def render_history_tab():
 
     st.dataframe(df_display, width="stretch", hide_index=True)
 
+    with st.expander("📜 أرشيف المتابعات اللحظية المتتالية (سجل كل ضغطة تحديث عبر الوقت)"):
+        df_snaps = storage.load_snapshots()
+        if df_snaps.empty:
+            st.info("لا توجد سجلات متابعة لحظية سابقة بعد. اضغط على زر 'تحديث تقييم التوصيات الآن' لتسجيل أول لقطة متابعة.")
+        else:
+            st.dataframe(
+                df_snaps.fillna("").astype(str).rename(columns={
+                    "snapshot_time": "توقيت الفحص",
+                    "ticker": "الكود",
+                    "company_name_ar": "الشركة",
+                    "recommendation": "التوصية",
+                    "entry_price": "سعر الدخول",
+                    "live_price": "السعر في تلك اللحظة",
+                    "return_pct": "العائد %",
+                    "status": "الحالة",
+                    "target_price": "الهدف",
+                    "stop_loss": "الوقف"
+                }),
+                width="stretch",
+                hide_index=True
+            )
+
 
 def _evaluate_all_history(df: pd.DataFrame) -> int:
     count = 0
     today_str = datetime.now(CAIRO_TZ).strftime("%Y-%m-%d %H:%M:%S")
     today_date = datetime.now(CAIRO_TZ).date()
     df = df.copy().astype(object)
+    snapshots_list = []
 
     for idx, row in df.iterrows():
         ticker = row.get("ticker")
@@ -364,7 +387,21 @@ def _evaluate_all_history(df: pd.DataFrame) -> int:
             df.at[idx, "return_pct"] = round(float(ret), 2)
         count += 1
 
+        snapshots_list.append({
+            "snapshot_time": today_str,
+            "ticker": ticker,
+            "company_name_ar": row.get("company_name_ar", ""),
+            "recommendation": rec_type,
+            "entry_price": p_entry,
+            "live_price": round(curr_price, 3) if curr_price is not None else "",
+            "return_pct": round(float(ret), 2) if ret is not None else "",
+            "status": ar_status,
+            "target_price": target,
+            "stop_loss": stop,
+        })
+
     storage.save_history(df)
+    storage.append_snapshots(snapshots_list)
     return count
 
 

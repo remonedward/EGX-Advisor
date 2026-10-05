@@ -228,3 +228,90 @@ def check_duplicate_today(ticker: str) -> bool:
     dates = pd.to_datetime(df["timestamp_cairo"], errors="coerce").dt.date
     recent = df[(df["ticker"] == ticker) & (dates == today)]
     return not recent.empty
+
+
+# ---------------------------------------------------------------- Snapshots Log
+SNAPSHOT_COLUMNS = [
+    "snapshot_time", "ticker", "company_name_ar", "recommendation",
+    "entry_price", "live_price", "return_pct", "status", "target_price", "stop_loss"
+]
+LOCAL_SNAPSHOTS_CSV_PATH = Path(__file__).parent / "data" / "egx_snapshots_history.csv"
+
+
+def get_snapshots_sheet() -> gspread.worksheet.Worksheet | None:
+    client = _get_client()
+    sheet_id = secret("GSHEET_ID")
+    if not client or not sheet_id:
+        return None
+    try:
+        sh = client.open_by_key(str(sheet_id).strip())
+        try:
+            return sh.worksheet("snapshots_log")
+        except gspread.exceptions.WorksheetNotFound:
+            ws = sh.add_worksheet(title="snapshots_log", rows=2000, cols=12)
+            ws.append_row(SNAPSHOT_COLUMNS)
+            return ws
+    except Exception as e:
+        print("Failed to access snapshots_log worksheet:", e)
+        return None
+
+
+def append_snapshots(snapshots: list[dict]) -> bool:
+    if not snapshots:
+        return True
+
+    # 1. Google Sheets
+    sheet = get_snapshots_sheet()
+    if sheet:
+        try:
+            rows = [[s.get(c, "") for c in SNAPSHOT_COLUMNS] for s in snapshots]
+            sheet.append_rows(rows)
+        except Exception as e:
+            print("Failed to append to snapshots_log sheet:", e)
+
+    # 2. Local CSV fallback
+    try:
+        LOCAL_SNAPSHOTS_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
+        df_new = pd.DataFrame(snapshots)
+        for c in SNAPSHOT_COLUMNS:
+            if c not in df_new.columns:
+                df_new[c] = ""
+        df_new = df_new[SNAPSHOT_COLUMNS]
+        if LOCAL_SNAPSHOTS_CSV_PATH.exists() and LOCAL_SNAPSHOTS_CSV_PATH.stat().st_size > 0:
+            df_existing = pd.read_csv(LOCAL_SNAPSHOTS_CSV_PATH, encoding="utf-8-sig")
+            df_all = pd.concat([df_existing, df_new], ignore_index=True)
+        else:
+            df_all = df_new
+        df_all.to_csv(LOCAL_SNAPSHOTS_CSV_PATH, index=False, encoding="utf-8-sig")
+        return True
+    except Exception as e:
+        print("Failed to save local snapshots CSV:", e)
+        return False
+
+
+def load_snapshots() -> pd.DataFrame:
+    sheet = get_snapshots_sheet()
+    if sheet:
+        try:
+            records = sheet.get_all_records()
+            df = pd.DataFrame(records)
+            if not df.empty:
+                df = df.astype(object)
+                df["snapshot_time"] = pd.to_datetime(df["snapshot_time"], errors="coerce")
+                return df.sort_values("snapshot_time", ascending=False).reset_index(drop=True)
+        except Exception as e:
+            print("Failed to read snapshots from Google Sheets:", e)
+
+    if LOCAL_SNAPSHOTS_CSV_PATH.exists() and LOCAL_SNAPSHOTS_CSV_PATH.stat().st_size > 0:
+        try:
+            df = pd.read_csv(LOCAL_SNAPSHOTS_CSV_PATH, encoding="utf-8-sig")
+            if not df.empty:
+                df = df.astype(object)
+                if "snapshot_time" in df.columns:
+                    df["snapshot_time"] = pd.to_datetime(df["snapshot_time"], errors="coerce")
+                return df.sort_values("snapshot_time", ascending=False).reset_index(drop=True)
+            return df
+        except Exception as e:
+            print("Failed to read local snapshots CSV:", e)
+
+    return pd.DataFrame(columns=SNAPSHOT_COLUMNS).astype(object)
