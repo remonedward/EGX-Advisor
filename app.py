@@ -241,25 +241,24 @@ def render_history_tab():
 
     # Table display
     display_cols = [
-        "timestamp_cairo", "eval_date", "ticker", "company_name_ar", "recommendation",
-        "price_at_rec", "exit_price", "target_price", "stop_loss", "confidence",
-        "status", "return_pct"
+        "ticker", "company_name_ar", "recommendation",
+        "price_at_rec", "exit_price", "return_pct", "eval_date",
+        "status", "target_price", "stop_loss", "timestamp_cairo"
     ]
     avail_cols = [c for c in display_cols if c in df.columns]
 
     df_display = df[avail_cols].fillna("").astype(str).rename(columns={
-        "timestamp_cairo": "تاريخ إصدار التوصية",
-        "eval_date": "تاريخ ووقت آخر تحديث",
         "ticker": "الكود",
         "company_name_ar": "الشركة",
         "recommendation": "التوصية",
         "price_at_rec": "سعر الدخول",
         "exit_price": "السعر اللحظي/الحالي",
+        "return_pct": "العائد اللحظي/المحقق %",
+        "eval_date": "تاريخ ووقت التحديث اللحظي",
+        "status": "حالة التوصية",
         "target_price": "الهدف",
         "stop_loss": "الوقف",
-        "confidence": "الثقة %",
-        "status": "حالة التوصية",
-        "return_pct": "العائد اللحظي/المحقق %"
+        "timestamp_cairo": "تاريخ إصدار التوصية الأصلي"
     })
 
     st.dataframe(df_display, width="stretch", hide_index=True)
