@@ -202,7 +202,8 @@ def render_history_tab():
         if st.button("🔄 تحديث تقييم التوصيات الآن", type="secondary"):
             with st.spinner("جارٍ فحص أسعار الأسهم بعد تاريخ كل توصية وتقييم النتائج..."):
                 updated_count = _evaluate_all_history(df)
-                st.success(f"تم فحص وتحديث التقييم لـ {updated_count} توصية.")
+                now_str = datetime.now(CAIRO_TZ).strftime("%Y-%m-%d %H:%M:%S")
+                st.success(f"تم فحص وتحديث التقييم لـ {updated_count} توصية بنجاح في: {now_str}")
                 df = storage.load_history()
 
     with col_down:
@@ -240,14 +241,15 @@ def render_history_tab():
 
     # Table display
     display_cols = [
-        "timestamp_cairo", "ticker", "company_name_ar", "recommendation",
+        "timestamp_cairo", "eval_date", "ticker", "company_name_ar", "recommendation",
         "price_at_rec", "exit_price", "target_price", "stop_loss", "confidence",
         "status", "return_pct"
     ]
     avail_cols = [c for c in display_cols if c in df.columns]
 
     df_display = df[avail_cols].fillna("").astype(str).rename(columns={
-        "timestamp_cairo": "تاريخ التوصية",
+        "timestamp_cairo": "تاريخ إصدار التوصية",
+        "eval_date": "تاريخ ووقت آخر تحديث",
         "ticker": "الكود",
         "company_name_ar": "الشركة",
         "recommendation": "التوصية",
@@ -265,7 +267,7 @@ def render_history_tab():
 
 def _evaluate_all_history(df: pd.DataFrame) -> int:
     count = 0
-    today_str = datetime.now(CAIRO_TZ).strftime("%Y-%m-%d %H:%M")
+    today_str = datetime.now(CAIRO_TZ).strftime("%Y-%m-%d %H:%M:%S")
     today_date = datetime.now(CAIRO_TZ).date()
     df = df.copy().astype(object)
 
